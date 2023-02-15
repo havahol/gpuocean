@@ -288,12 +288,12 @@ float3 computeFFaceFlux(const int i, const int j, const int bx,
     if ((bc_east_ == 1) && (bx + i + 2 == NX+2)) { vp = -vp; }
     
     //Reconstruct momentum along north
-    const float vp_north = up*north.x + vp*north.y;
-    const float vm_north = um*north.x + vm*north.y;
+    float vp_north = up*north.x + vp*north.y;
+    float vm_north = um*north.x + vm*north.y;
     
     // Reconstruct h
-    const float hp = fmaxf(0.0f, eta_bar_p + H_face - (Kx_p + DX*coriolis_fp*vp_north)/(2.0f*GRAV));
-    const float hm = fmaxf(0.0f, eta_bar_m + H_face + (Kx_m + DX*coriolis_fm*vm_north)/(2.0f*GRAV));
+    float hp = fmaxf(0.0f, eta_bar_p + H_face - (Kx_p + DX*coriolis_fp*vp_north)/(2.0f*GRAV));
+    float hm = fmaxf(0.0f, eta_bar_m + H_face + (Kx_m + DX*coriolis_fm*vm_north)/(2.0f*GRAV));
 
     // Our flux variables Q=(h, u, v)
     const float3 Qp = make_float3(hp, Rp.x, Rp.y);
@@ -314,11 +314,15 @@ float3 computeFFaceFlux(const int i, const int j, const int bx,
     //    Qm = make_float3(hp, 0.0f, 0.0f); 
     // what also conserves lakes at rest but behaves criticial in presence of waves]
     if (eta_bar_m == CDKLM_DRY_FLAG && eta_bar_p != CDKLM_DRY_FLAG) {
-        return make_float3(0.0f, 0.5f*GRAV*Qp.x*Qp.x, 0.0f);
+        vp_north = up*north.x - vp*north.y;
+        hp = fmaxf(0.0f, eta_bar_p + H_face - (Kx_p + DX*coriolis_fp*vp_north)/(2.0f*GRAV));
+        return make_float3(0.0f, 0.5f*GRAV*hp*hp, 0.0f);
     }
 
     if (eta_bar_m != CDKLM_DRY_FLAG && eta_bar_p == CDKLM_DRY_FLAG){
-        return make_float3(0.0f, 0.5f*GRAV*Qm.x*Qm.x, 0.0f);
+        vm_north = um*north.x - vm*north.y;
+        hm = fmaxf(0.0f, eta_bar_m + H_face + (Kx_m + DX*coriolis_fm*vm_north)/(2.0f*GRAV));
+        return make_float3(0.0f, 0.5f*GRAV*hm*hm, 0.0f);
     }
 
     // Computed flux
@@ -373,12 +377,12 @@ float3 computeGFaceFlux(const int i, const int j, const int by,
     if ((bc_north_ == 1) && (by + j + 2 == NY+2)) { up = -up; }
     
     // Reconstruct momentum along east
-    const float up_east = up*east.x + vp*east.y;
-    const float um_east = um*east.x + vm*east.y;
+    float up_east = up*east.x + vp*east.y;
+    float um_east = um*east.x + vm*east.y;
     
     // Reconstruct h
-    const float hp = fmaxf(0.0f, eta_bar_p + H_face - ( Ly_p - DY*coriolis_fp*up_east)/(2.0f*GRAV));
-    const float hm = fmaxf(0.0f, eta_bar_m + H_face + ( Ly_m - DY*coriolis_fm*um_east)/(2.0f*GRAV));
+    float hp = fmaxf(0.0f, eta_bar_p + H_face - ( Ly_p - DY*coriolis_fp*up_east)/(2.0f*GRAV));
+    float hm = fmaxf(0.0f, eta_bar_m + H_face + ( Ly_m - DY*coriolis_fm*um_east)/(2.0f*GRAV));
 
     // Our flux variables Q=(h, v, u)
     // Note that we swap u and v
@@ -388,11 +392,15 @@ float3 computeGFaceFlux(const int i, const int j, const int by,
     // Check if wet-dry face: if so balance potential energy of water level'
     // NOTE: See docu in "computeFFaceFlux"
     if (eta_bar_m == CDKLM_DRY_FLAG && eta_bar_p != CDKLM_DRY_FLAG) {
-        return make_float3(0.0f, 0.0f, 0.5f*GRAV*Qp.x*Qp.x);
+        up_east = -up*east.x + vp*east.y;
+        hp = fmaxf(0.0f, eta_bar_p + H_face - ( Ly_p - DY*coriolis_fp*up_east)/(2.0f*GRAV));
+        return make_float3(0.0f, 0.0f, 0.5f*GRAV*hp*hp);
     }
 
     if (eta_bar_m != CDKLM_DRY_FLAG && eta_bar_p == CDKLM_DRY_FLAG){
-        return make_float3(0.0f, 0.0f, 0.5f*GRAV*Qm.x*Qm.x);
+        um_east = -um*east.x + vm*east.y;
+        hm = fmaxf(0.0f, eta_bar_m + H_face + ( Ly_m - DY*coriolis_fm*um_east)/(2.0f*GRAV));
+        return make_float3(0.0f, 0.0f, 0.5f*GRAV*hm*hm);
     }
     
     // Computed flux
