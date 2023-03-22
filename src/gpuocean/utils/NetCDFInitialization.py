@@ -86,29 +86,38 @@ def getBoundaryConditionsData(source_url_list, timestep_indices, timesteps, x0, 
 
                 h = H + zeta
                 
-                if norkyst_data:
-                    hu = ncfile.variables['ubar'][timestep_index, y0-1:y1+1, x0-1:x1+1]
-                    hu = hu.filled(0) #zero on land
+                if source_url_list[i].find("norkyst") > -1:
+                    # Non-staggered grid, ubar/vbar available:
+                    u_bar = ncfile.variables['ubar'][timestep_index, y0-1:y1+1, x0-1:x1+1]
+                    u_bar = u_bar.filled(0) #zero on land
+                elif source_url_list[i].find("barents") > -1:
+                    # Non-staggered grid, ubar/vbar not available:
+                    u_bar, _ = verticalAveragedCurrent(source_url_list[i], x0-1, x1+1, y0-1, y1+1, timestep_index)
+                    u_bar = u_bar.filled(0)
                 else: 
-                    hu = ncfile.variables['ubar'][timestep_index, y0-1:y1+1, x0-1:x1+2]
-                    hu = hu.filled(0) #zero on land
-                    hu = (hu[:,1:] + hu[:, :-1]) * 0.5
+                    u_bar = ncfile.variables['ubar'][timestep_index, y0-1:y1+1, x0-1:x1+2]
+                    u_bar = u_bar.filled(0) #zero on land
+                    u_bar = (u_bar[:,1:] + u_bar[:, :-1]) * 0.5
                     
-                hu = h*hu
+                hu = h*u_bar
 
                 bc_hu['north'][bc_index] = hu[-1, 1:-1]
                 bc_hu['south'][bc_index] = hu[0, 1:-1]
                 bc_hu['east'][bc_index] = hu[1:-1, -1]
                 bc_hu['west'][bc_index] = hu[1:-1, 0]
 
-                if norkyst_data:
-                    hv = ncfile.variables['vbar'][timestep_index, y0-1:y1+1, x0-1:x1+1]
-                    hv = hv.filled(0) #zero on land
+                if source_url_list[i].find("norkyst") > -1:
+                    v_bar = ncfile.variables['vbar'][timestep_index, y0-1:y1+1, x0-1:x1+1]
+                    v_bar = v_bar.filled(0) #zero on land
+                elif source_url_list[i].find("barents") > -1:
+                    # Non-staggered grid, ubar/vbar not available:
+                    _, v_bar = verticalAveragedCurrent(source_url_list[i], x0-1, x1+1, y0-1, y1+1, timestep_index)
+                    v_bar = v_bar.filled(0)
                 else:
-                    hv = ncfile.variables['vbar'][timestep_index, y0-1:y1+2, x0-1:x1+1]
-                    hv = hv.filled(0) #zero on land
-                    hv = (hv[1:,:] + hv[:-1, :]) * 0.5
-                hv = h*hv
+                    v_bar = ncfile.variables['vbar'][timestep_index, y0-1:y1+2, x0-1:x1+1]
+                    v_bar = v_bar.filled(0) #zero on land
+                    v_bar = (v_bar[1:,:] + v_bar[:-1, :]) * 0.5
+                hv = h*v_bar
 
                 bc_hv['north'][bc_index] = hv[-1, 1:-1]
                 bc_hv['south'][bc_index] = hv[0, 1:-1]
@@ -244,7 +253,9 @@ def getInitialConditions(source_url_list, x0, x1, y0, y1, \
         
     # Read constants and initial values from the first source url
     source_url = source_url_list[0]
-    if norkyst_data:
+
+    if source_url.find("norkyst") > -1:
+        # Non-staggered grid, ubar/vbar available
         try:
             ncfile = Dataset(source_url)
             H_m = ncfile.variables['h'][y0-1:y1+1, x0-1:x1+1]
@@ -264,7 +275,25 @@ def getInitialConditions(source_url_list, x0, x1, y0, y1, \
         v0 = v0.filled(0.0)
         
         time_str = 'time'
+    elif source_url.find("barents") > -1:
+        # Non-staggered grid, ubar/vbar not available
+        try:
+            ncfile = Dataset(source_url)
+            H_m = ncfile.variables['h'][y0-1:y1+1, x0-1:x1+1]
+            eta0 = ncfile.variables['zeta'][0, y0-1:y1+1, x0-1:x1+1]
+            angle = ncfile.variables['angle'][y0:y1, x0:x1]
+            latitude = ncfile.variables['lat'][y0:y1, x0:x1]
+            x = ncfile.variables['X'][x0:x1]
+            y = ncfile.variables['Y'][y0:y1]
+        except Exception as e:
+            raise e
+        finally:
+            ncfile.close()        
+
+        u0, v0 = verticalAveragedCurrent(source_url, x0, x1, y0, y1, 0)
+        time_str = 'time'
     else:
+        # Staggered grid (e.g., NorFjord, FjordOS)
         try:
             ncfile = Dataset(source_url)
             H_m = ncfile.variables['h'][y0-1:y1+1, x0-1:x1+1]
@@ -479,6 +508,53 @@ def rescaleInitialConditions(old_ic, scale):
     ic['note'] = old_ic['note'] + "\n" + datetime.datetime.now().isoformat() + ": Rescaled by factor " + str(scale)
 
     return ic
+
+def verticalAveragedCurrent(source_url, x0, x1, y0, y1, t_index):
+    """
+    Compute u_bar, v_bar from 3D field of u, v
+    """
+
+
+    try:
+        ncfile = Dataset(source_url)
+        H_m = ncfile.variables['h'][y0:y1, x0:x1]
+        eta0 = ncfile.variables['zeta'][t_index, y0:y1, x0:x1]
+        u = ncfile.variables['u'][t_index, :, y0:y1, x0:x1]
+        v = ncfile.variables['v'][t_index, :, y0:y1, x0:x1]
+        depth = ncfile.variables['depth'][:]
+    except Exception as e:
+        raise e
+    finally:
+        ncfile.close()   
+
+    ny, nx = eta0.shape
+    
+    u.set_fill_value(0.0)
+    u = u.filled()
+    v.set_fill_value(0.0)
+    v = v.filled()
+
+    #hu = np.zeros_like(eta0)
+    #hv = np.zeros_like(eta0)
+    depth_m = (depth[1:] + depth[:-1])/2 
+
+    hu = (eta0 + depth_m[0])*u[0, :, :]
+    hv = (eta0 + depth_m[0])*v[0, :, :]
+
+    hu.set_fill_value(0.0)
+    hu = hu.filled()
+    hv.set_fill_value(0.0)
+    hv = hv.filled()
+
+    for d in range(1, len(depth)-1):
+        
+        hu = hu + np.maximum(np.zeros_like(eta0), np.minimum(depth_m[d], H_m) - depth_m[d-1])*u[d,:,:]
+        hv = hv + np.maximum(np.zeros_like(eta0), np.minimum(depth_m[d], H_m) - depth_m[d-1])*v[d,:,:]
+        
+    hu = hu + np.maximum(np.zeros_like(eta0), H_m - depth_m[-1])*u[-1,:,:]
+    hv = hv + np.maximum(np.zeros_like(eta0), H_m - depth_m[-1])*v[-1,:,:]
+
+    return hu/(eta0+H_m), hv/(eta0+H_m)
 
 
 def removeMetadata(old_ic):
