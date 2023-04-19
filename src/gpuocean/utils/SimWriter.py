@@ -188,18 +188,16 @@ class SimNetCDFWriter:
             self.model_time_step = sim.model_time_step
             self.ncfile.model_time_step = self.model_time_step 
             
-            self.small_scale_perturbation = sim.small_scale_perturbation
-            self.ncfile.small_scale_perturbation = str(self.small_scale_perturbation)
+            self.small_scale_perturbation = sim.model_error is not None
+            self.ncfile.small_scale_perturbation = str(self.small_scale_perturbation) # boolean 
             
-            if self.small_scale_perturbation:
+            if self.small_scale_perturbation and str(sim.model_error.__class__).find("OceanStateNoise") > -1:
 
-                self.small_scale_perturbation_amplitude = sim.small_scale_model_error.soar_q0
+                self.small_scale_perturbation_amplitude = sim.model_error.soar_q0
                 self.ncfile.small_scale_perturbation_amplitude = self.small_scale_perturbation_amplitude
 
-                self.small_scale_perturbation_interpolation_factor = sim.small_scale_model_error.interpolation_factor
+                self.small_scale_perturbation_interpolation_factor = sim.model_error.interpolation_factor
                 self.ncfile.small_scale_perturbation_interpolation_factor = self.small_scale_perturbation_interpolation_factor
-            
-            #y_zero_reference_cell
             
 
         

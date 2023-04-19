@@ -112,12 +112,12 @@ class CDKLM16(Simulator.Simulator):
         wind: Wind stress parameters
         atmospheric_pressure: Object with values for atmospheric pressure
         boundary_conditions: Boundary condition object
-        small_scale_perturbation: Boolean value for applying a stochastic model error
-        small_scale_perturbation_amplitude: Amplitude (q0 coefficient) for model error
-        small_scale_perturbation_interpolation_factor: Width factor for correlation in model error
+        small_scale_perturbation [deprecated]: Boolean value for applying a stochastic model error
+        small_scale_perturbation_amplitude [deprecated]: Amplitude (q0 coefficient) for model error
+        small_scale_perturbation_interpolation_factor [deprecated]: Width factor for correlation in model error
         model_time_step: The size of a data assimilation model step (default same as dt)
         reportGeostrophicEquilibrium: Calculate the Geostrophic Equilibrium variables for each superstep
-        use_lcg: Use LCG as the random number generator. Default is False, which means using curand.
+        use_lcg [deprecated]: Use LCG as the random number generator. Default is False, which means using curand.
         write_netcdf: Write the results after each superstep to a netCDF file
         comm: MPI communicator
         local_particle_id: Local (for each MPI process) particle id
@@ -366,18 +366,8 @@ class CDKLM16(Simulator.Simulator):
         
         
         # Small scale perturbation:
-        self.small_scale_perturbation = small_scale_perturbation
-        self.small_scale_model_error = None
-        self.small_scale_perturbation_interpolation_factor = small_scale_perturbation_interpolation_factor
-        if small_scale_perturbation:
-            self.small_scale_model_error = OceanStateNoise.OceanStateNoise.fromsim(self, 
-                                                                                   soar_q0=small_scale_perturbation_amplitude,
-                                                                                   interpolation_factor=small_scale_perturbation_interpolation_factor,
-                                                                                   use_lcg=use_lcg, xorwow_seed=xorwow_seed,
-                                                                                   block_width=block_width_model_error, 
-                                                                                   block_height=block_height_model_error)
-    
-        
+        self.model_error = None
+
         # Data assimilation model step size
         self.model_time_step = model_time_step
         self.total_time_steps = 0
@@ -402,8 +392,8 @@ class CDKLM16(Simulator.Simulator):
         
         self.gpu_data.release()
         
-        if self.small_scale_model_error is not None:
-            self.small_scale_model_error.cleanUp()
+        if self.model_error is not None:
+            self.model_error.cleanUp()
         
         
         if self.geoEq_uxpvy is not None:
@@ -472,8 +462,8 @@ class CDKLM16(Simulator.Simulator):
             'coriolis_beta': sim_reader.get("coriolis_beta"),
             # 'y_zero_reference_cell': sim_reader.get("y_zero_reference_cell"), # TODO - UPDATE WITH NEW API
             'write_netcdf': cont_write_netcdf,
-            'use_lcg': use_lcg,
-            'xorwow_seed' : xorwow_seed,
+            #'use_lcg': use_lcg,
+            #'xorwow_seed' : xorwow_seed,
             'netcdf_filename': new_netcdf_filename
         }    
         
@@ -485,11 +475,11 @@ class CDKLM16(Simulator.Simulator):
         sim_params['boundary_conditions'] = sim_reader.getBC()
     
         # Model errors
-        if sim_reader.has('small_scale_perturbation'):
-            sim_params['small_scale_perturbation'] = sim_reader.get('small_scale_perturbation') == 'True'
-            if sim_params['small_scale_perturbation']:
-                sim_params['small_scale_perturbation_amplitude'] = sim_reader.get('small_scale_perturbation_amplitude')
-                sim_params['small_scale_perturbation_interpolation_factor'] = sim_reader.get('small_scale_perturbation_interpolation_factor')
+        #if sim_reader.has('small_scale_perturbation'):
+        #    sim_params['small_scale_perturbation'] = sim_reader.get('small_scale_perturbation') == 'True'
+        #    if sim_params['small_scale_perturbation']:
+        #        sim_params['small_scale_perturbation_amplitude'] = sim_reader.get('small_scale_perturbation_amplitude')
+        #        sim_params['small_scale_perturbation_interpolation_factor'] = sim_reader.get('small_scale_perturbation_interpolation_factor')
             
             
         # Data assimilation parameters:
@@ -590,8 +580,8 @@ class CDKLM16(Simulator.Simulator):
                 # Applying final boundary conditions after perturbation (if applicable)
             
             # Perturb ocean state with model error
-            if self.small_scale_perturbation and apply_stochastic_term:
-                self.small_scale_model_error.perturbSim(self)
+            if self.model_error is not None and apply_stochastic_term:
+                self.model_error.perturbSim(self)
                 
             # Apply boundary conditions
             self.bc_kernel.boundaryCondition(self.gpu_stream, \
@@ -608,6 +598,18 @@ class CDKLM16(Simulator.Simulator):
             self.sim_writer.writeTimestep(self)
             
         return self.t
+    
+    def setSOARModelError(self, small_scale_perturbation_amplitude=None, \
+                 small_scale_perturbation_interpolation_factor = 1, \
+                 use_lcg=False, xorwow_seed = None, \
+                 block_width_model_error=16, block_height_model_error=16):
+        self.model_error = OceanStateNoise.OceanStateNoise.fromsim(self, 
+                                                                   soar_q0=small_scale_perturbation_amplitude,
+                                                                   interpolation_factor=small_scale_perturbation_interpolation_factor,
+                                                                   use_lcg=use_lcg, xorwow_seed=xorwow_seed,
+                                                                   block_width=block_width_model_error, 
+                                                                   block_height=block_height_model_error)
+    
 
     def drifterStep(self, dt):
         # Evolve drifters
@@ -652,9 +654,11 @@ class CDKLM16(Simulator.Simulator):
                            boundary_conditions)
             
     
-    def perturbState(self, q0_scale=1):
-        if self.small_scale_perturbation:
-            self.small_scale_model_error.perturbSim(self, q0_scale=q0_scale)
+    def perturbState(self, q0_scale=1, perturbation_scale=1.0, update_random_field=True):
+        if self.model_error is not None:
+            self.model_error.perturbSim(self, q0_scale=q0_scale, 
+                                        perturbation_scale=perturbation_scale, 
+                                        update_random_field=update_random_field)
     
     def applyBoundaryConditions(self):
         self.bc_kernel.boundaryCondition(self.gpu_stream, \
