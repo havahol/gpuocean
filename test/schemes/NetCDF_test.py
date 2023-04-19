@@ -66,18 +66,19 @@ class NetCDFtest(unittest.TestCase):
         doubleJetCase = DoubleJetCase.DoubleJetCase(self.gpu_ctx,
                                                     DoubleJetCase.DoubleJetPerturbationType.IEWPFPaperCase)
 
-        doubleJetCase_args, doubleJetCase_init = doubleJetCase.getInitConditions()
+        doubleJetCase_args, doubleJetCase_init, model_error_args = doubleJetCase.getInitConditions()
         netcdf_args = {
             'write_netcdf': True,
             'netcdf_filename': 'netcdf_test/netcdf_test.nc'
         }
         self.sim = CDKLM16.CDKLM16(**doubleJetCase_args, **doubleJetCase_init, **netcdf_args)
+        self.sim.setSOARModelError(**model_error_args)
         self.sim.closeNetCDF()
         
         
         # Create new simulator from the newly created file
         self.file_sim = CDKLM16.CDKLM16.fromfilename(self.gpu_ctx, netcdf_args['netcdf_filename'], cont_write_netcdf=False)
-        #self.file_sim.
+        self.file_sim.setModelErrorFromFile(netcdf_args['netcdf_filename'])
         
         # Loop over object attributes and compare those that are scalars
         for attr in dir(self.sim):

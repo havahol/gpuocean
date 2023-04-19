@@ -64,13 +64,8 @@ class CDKLM16(Simulator.Simulator):
                  atmospheric_pressure=AtmosphericPressure.AtmosphericPressure(), \
                  boundary_conditions=Common.BoundaryConditions(), \
                  boundary_conditions_data=Common.BoundaryConditionsData(), \
-                 small_scale_perturbation=False, \
-                 small_scale_perturbation_amplitude=None, \
-                 small_scale_perturbation_interpolation_factor = 1, \
                  model_time_step=None,
                  reportGeostrophicEquilibrium=False, \
-                 use_lcg=False, \
-                 xorwow_seed = None, \
                  write_netcdf=False, \
                  comm=None, \
                  local_particle_id=0, \
@@ -84,8 +79,7 @@ class CDKLM16(Simulator.Simulator):
                  depth_cutoff = 1.0e-5, \
                  one_dimensional = False, \
                  flux_balancer = 0.8, \
-                 block_width=12, block_height=32, num_threads_dt=256,
-                 block_width_model_error=16, block_height_model_error=16):
+                 block_width=12, block_height=32, num_threads_dt=256):
         """
         Initialization routine
         eta0: Initial deviation from mean sea level incl ghost cells, (nx+2)*(ny+2) cells
@@ -411,7 +405,7 @@ class CDKLM16(Simulator.Simulator):
         gc.collect()
            
     @classmethod
-    def fromfilename(cls, gpu_ctx, filename, cont_write_netcdf=True, use_lcg=False, xorwow_seed = None, new_netcdf_filename=None, time0=None):
+    def fromfilename(cls, gpu_ctx, filename, cont_write_netcdf=True, new_netcdf_filename=None, time0=None):
         """
         Initialize and hotstart simulation from nc-file.
         cont_write_netcdf: Continue to write the results after each superstep to a new netCDF file
@@ -425,6 +419,7 @@ class CDKLM16(Simulator.Simulator):
                "Trying to initialize a " + \
                cls.__name__ + " simulator with netCDF file based on " \
                + sim_name + " results."
+        
         
         # read the most recent state 
         H = sim_reader.getH()
@@ -474,14 +469,7 @@ class CDKLM16(Simulator.Simulator):
         # Boundary conditions
         sim_params['boundary_conditions'] = sim_reader.getBC()
     
-        # Model errors
-        #if sim_reader.has('small_scale_perturbation'):
-        #    sim_params['small_scale_perturbation'] = sim_reader.get('small_scale_perturbation') == 'True'
-        #    if sim_params['small_scale_perturbation']:
-        #        sim_params['small_scale_perturbation_amplitude'] = sim_reader.get('small_scale_perturbation_amplitude')
-        #        sim_params['small_scale_perturbation_interpolation_factor'] = sim_reader.get('small_scale_perturbation_interpolation_factor')
-            
-            
+
         # Data assimilation parameters:
         if sim_reader.has('model_time_step'):
             sim_params['model_time_step'] = sim_reader.get('model_time_step')
@@ -610,7 +598,39 @@ class CDKLM16(Simulator.Simulator):
                                                                    block_width=block_width_model_error, 
                                                                    block_height=block_height_model_error)
     
+        if self.write_netcdf:
+            self.sim_writer.writeModelError(self)
 
+    def setModelErrorFromFile(self, filename, use_lcg=False, xorwow_seed = None):
+        """
+        Initialize model error according to attributes in a netcdf file .
+        filename: NetCDF file that has been written from a CDKLM simulator
+        """
+        # open nc-file
+        sim_reader = SimReader.SimNetCDFReader(filename, ignore_ghostcells=False)
+        sim_name = str(sim_reader.get('simulator_short'))
+        assert sim_name == self.__class__.__name__, \
+               "Trying to initialize a " + \
+               self.__class__.__name__ + " simulator with netCDF file based on " \
+               + sim_name + " results."
+
+        model_error_args = {}
+
+        if sim_reader.has('small_scale_perturbation'):
+            # For some backward compatibility (old version of SimWriter)
+            if sim_reader.get('small_scale_perturbation') == 'True':
+                model_error_args['small_scale_perturbation_amplitude'] = sim_reader.get('small_scale_perturbation_amplitude')
+                model_error_args['small_scale_perturbation_interpolation_factor'] = sim_reader.get('small_scale_perturbation_interpolation_factor')
+                self.setSOARModelError(**model_error_args, use_lcg=use_lcg, xorwow_seed=xorwow_seed)
+        elif sim_reader.has('has_model_error'): 
+            # New version of SimWriter
+            if sim_reader.get('has_model_error') == "True":
+                if sim_reader.get('model_error_name') == "OceanStateNoise":
+                    model_error_args['small_scale_perturbation_amplitude'] = sim_reader.get('small_scale_perturbation_amplitude')
+                    model_error_args['small_scale_perturbation_interpolation_factor'] = sim_reader.get('small_scale_perturbation_interpolation_factor')
+                    self.setSOARModelError(**model_error_args, use_lcg=use_lcg, xorwow_seed=xorwow_seed)
+
+           
     def drifterStep(self, dt):
         # Evolve drifters
         if self.hasDrifters:

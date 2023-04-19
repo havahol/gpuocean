@@ -191,9 +191,6 @@ class DoubleJetCase:
             "t": 0.0,
             "rk_order": 2,
             "boundary_conditions": Common.BoundaryConditions(2,2,2,2),
-            "small_scale_perturbation": model_error,
-            "small_scale_perturbation_amplitude": 0.0003,
-            "small_scale_perturbation_interpolation_factor": 5,
         }
         
         self.base_init = {
@@ -201,7 +198,15 @@ class DoubleJetCase:
             "hu0": self.base_cpu_hu,
             "hv0": self.base_cpu_hv
         }
-        
+
+        if model_error:
+            self.model_error_args = {
+                "small_scale_perturbation_amplitude": 0.0003,
+                "small_scale_perturbation_interpolation_factor": 5
+            }
+        else:
+            self.model_error_args = {}
+
         if self.perturbation_type == DoubleJetPerturbationType.SpinUp or \
            self.perturbation_type == DoubleJetPerturbationType.LowFrequencySpinUp or \
            self.perturbation_type == DoubleJetPerturbationType.LowFrequencyStandardSpinUp:
@@ -215,6 +220,7 @@ class DoubleJetCase:
                 self.commonSpinUpTime = self.commonSpinUpTime*2
                 
             tmp_sim = CDKLM16.CDKLM16(**self.sim_args, **self.base_init)
+            tmp_sim.setSOARModelError(**self.model_error_args)
             tmp_t = tmp_sim.step(self.commonSpinUpTime)
             
             tmp_eta, tmp_hu, tmp_hv = tmp_sim.download(interior_domain_only=False)
@@ -227,10 +233,11 @@ class DoubleJetCase:
             
         # The IEWPFPaperCase - isolated to give a better overview
         if self.perturbation_type == DoubleJetPerturbationType.IEWPFPaperCase:
-            self.sim_args["small_scale_perturbation_amplitude"] = 0.00025
+            self.model_error_args["small_scale_perturbation_amplitude"] = 0.00025
             self.sim_args["model_time_step"] = 60 # sec
             
             tmp_sim = CDKLM16.CDKLM16(**self.sim_args, **self.base_init)
+            tmp_sim.setSOARModelError(**self.model_error_args)
             tmp_sim.updateDt()
             
             three_days = 3*24*60*60
@@ -272,7 +279,7 @@ class DoubleJetCase:
         """
         Provides the unperturbed steady-state double jet initial conditions
         """
-        return self.sim_args, self.base_init
+        return self.sim_args, self.base_init, self.model_error_args
     
     def getStandardPerturbedInitConditions(self):
         """
@@ -335,7 +342,7 @@ class DoubleJetCase:
                 eta_pert[j,i] += h_hat*lat*np.exp(-squared_dist_y_pos - squared_dist_x_pos) +\
                                  h_hat*lat*np.exp(-squared_dist_y_neg - squared_dist_x_neg)
 
-        return self.sim_args, {"eta0": self.base_cpu_eta + eta_pert, "hu0": self.base_cpu_hu, "hv0": self.base_cpu_hv}
+        return self.sim_args, {"eta0": self.base_cpu_eta + eta_pert, "hu0": self.base_cpu_hu, "hv0": self.base_cpu_hv}, self.model_error_args
         
     ###-----------------------------------------------------------------
     ### Utility functions for creating the stable initial case

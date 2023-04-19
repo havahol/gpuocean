@@ -128,6 +128,9 @@ class Simulator(object):
         self.hasDrifters = False
         self.drifters = None
         
+        # Model error object
+        self.model_error = None
+
         # NetCDF related parameters
         self.write_netcdf = write_netcdf
         self.ignore_ghostcells = ignore_ghostcells
@@ -345,6 +348,7 @@ class Simulator(object):
         Close the NetCDF file, if there is one
         """
         if self.write_netcdf:
+
             self.sim_writer.__exit__(0,0,0)
             self.write_netcdf = False
         

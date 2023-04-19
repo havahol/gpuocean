@@ -181,26 +181,6 @@ class SimNetCDFWriter:
         self.ncfile.ghost_cells_south = self.ghost_cells_south
         self.ncfile.ghost_cells_west  = self.ghost_cells_west
         
-        
-        # Write parameters related to stochastic model error and data assimilation
-        # At the time of writing, such parameters are only available in the CDKLM simulator.
-        if (sim.__class__.__name__ == "CDKLM16"):
-            self.model_time_step = sim.model_time_step
-            self.ncfile.model_time_step = self.model_time_step 
-            
-            self.small_scale_perturbation = sim.model_error is not None
-            self.ncfile.small_scale_perturbation = str(self.small_scale_perturbation) # boolean 
-            
-            if self.small_scale_perturbation and str(sim.model_error.__class__).find("OceanStateNoise") > -1:
-
-                self.small_scale_perturbation_amplitude = sim.model_error.soar_q0
-                self.ncfile.small_scale_perturbation_amplitude = self.small_scale_perturbation_amplitude
-
-                self.small_scale_perturbation_interpolation_factor = sim.model_error.interpolation_factor
-                self.ncfile.small_scale_perturbation_interpolation_factor = self.small_scale_perturbation_interpolation_factor
-            
-
-        
         #Create dimensions 
         self.ncfile.createDimension('time', None) #Unlimited time dimension
         if(not self.ignore_ghostcells):
@@ -404,6 +384,30 @@ class SimNetCDFWriter:
         # Init conditions should be added as the first element in the above arrays!
         self.i = 0
         self.writeTimestep(sim)
+
+    def writeModelError(self, sim):
+        # Write parameters related to stochastic model error and data assimilation
+        # At the time of writing, such parameters are only available in the CDKLM simulator.
+        if (sim.__class__.__name__ == "CDKLM16"):
+            self.model_time_step = sim.model_time_step
+            self.ncfile.model_time_step = self.model_time_step 
+            
+            self.model_error = sim.model_error is not None
+            self.ncfile.has_model_error = str(self.model_error) # boolean 
+
+            if self.model_error:
+                self.model_error_name = sim.model_error.__class__.__name__
+                self.ncfile.model_error_name = self.model_error_name
+
+                if self.model_error_name ==  "OceanStateNoise":
+
+                    self.small_scale_perturbation_amplitude = sim.model_error.soar_q0
+                    self.ncfile.small_scale_perturbation_amplitude = self.small_scale_perturbation_amplitude
+
+                    self.small_scale_perturbation_interpolation_factor = sim.model_error.interpolation_factor
+                    self.ncfile.small_scale_perturbation_interpolation_factor = self.small_scale_perturbation_interpolation_factor
+                
+
 
        
     def __str__(self):
