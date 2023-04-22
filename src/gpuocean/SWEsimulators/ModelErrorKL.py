@@ -148,8 +148,16 @@ class ModelErrorKL(object):
         self.random_numbers = Common.CUDAArray2D(self.gpu_stream, self.rand_nx, self.rand_ny, 0, 0, self.random_numbers_host)
                
         # Generate kernels
-        self.kernels = gpu_ctx.get_kernel("ocean_noise.cu", \
+        self.kernels_noise = gpu_ctx.get_kernel("ocean_noise.cu", \
                                           defines={'block_width': block_width, 'block_height': block_height},
+                                          compile_args={
+                                              'options': ["--use_fast_math",
+                                                          "--maxrregcount=32"]
+                                          })
+        
+        self.kernels_kl = gpu_ctx.get_kernel("model_error_kl.cu", \
+                                          defines={'block_width': block_width, 'block_height': block_height,
+                                                   'rand_nx': self.rand_nx, 'rand_ny': self.rand_ny},
                                           compile_args={
                                               'options': ["--use_fast_math",
                                                           "--maxrregcount=32"]
@@ -160,12 +168,15 @@ class ModelErrorKL(object):
         
         self.normalDistributionKernel = None
         if self.use_lcg:
-            self.normalDistributionKernel = self.kernels.get_function("normalDistribution")
+            self.normalDistributionKernel = self.kernels_noise.get_function("normalDistribution")
             self.normalDistributionKernel.prepare("iiiPiPi")
         
-        self.geostrophicBalanceKernel = self.kernels.get_function("geostrophicBalance")
+        self.geostrophicBalanceKernel = self.kernels_noise.get_function("geostrophicBalance")
         self.geostrophicBalanceKernel.prepare("iiffiiffffPiPiPiPiPif")
         
+        self.klSamplingKernel = self.kernels_kl.get_function("kl_sample")
+        self.klSamplingKernel.prepare("iiiiiiiiffffffPiPi")
+
         #Compute kernel launch parameters
         self.local_size = (block_width, block_height, 1)
         
@@ -175,11 +186,11 @@ class ModelErrorKL(object):
                        int(np.ceil(self.seed_ny / float(self.local_size[1]))) \
                      ) 
         
-        # Launch one thread per grid cell - need to write to one ghost 
+        # Launch one thread per grid cell 
         # cell in order to find geostrophic balance from the result
         self.global_size_KL = ( \
-                     int(np.ceil( (self.nx+2)/float(self.local_size[0]))), \
-                     int(np.ceil( (self.ny+2)/float(self.local_size[1]))) \
+                     int(np.ceil( self.nx/float(self.local_size[0]))), \
+                     int(np.ceil( self.ny/float(self.local_size[1]))) \
                     )
         
         # One thread per resulting perturbed grid cell
@@ -189,7 +200,7 @@ class ModelErrorKL(object):
                    )
         
         # Texture for coriolis field
-        self.coriolis_texref = self.kernels.get_texref("coriolis_f_tex")        
+        self.coriolis_texref = self.kernels_noise.get_texref("coriolis_f_tex")        
         if isinstance(coriolis_f, cuda.Array):
             # coriolis_f is already a texture, so we just set the reference
             self.coriolis_texref.set_array(coriolis_f)
@@ -207,7 +218,7 @@ class ModelErrorKL(object):
         
         
         # Texture for angle towards north
-        self.angle_texref = self.kernels.get_texref("angle_tex")        
+        self.angle_texref = self.kernels_noise.get_texref("angle_tex")        
         if isinstance(angle, cuda.Array):
             # angle is already a texture, so we just set the reference
             self.angle_texref.set_array(angle)
@@ -289,7 +300,11 @@ class ModelErrorKL(object):
         self.random_numbers_host[:, :] = random_numbers[:,:]
         self.random_numbers.upload(self.gpu_stream, self.random_numbers_host)
 
-    def perturbSim(self, sim, perturbation_scale=1.0, update_random_field=True, stream=None):
+    def perturbSim(self, sim, perturbation_scale=1.0, update_random_field=True, 
+                   random_numbers=None, 
+                   roll_x_sin=None, roll_y_sin=None,
+                   roll_x_cos=None, roll_y_cos=None,
+                   stream=None):
         """
         Generating a perturbed ocean state and adding it to sim's ocean state 
         """
@@ -298,40 +313,29 @@ class ModelErrorKL(object):
                                sim.f, beta=sim.coriolis_beta, 
                                g=sim.g, 
                                y0_reference_cell=sim.y_zero_reference_cell,
-                               ghost_cells_x=sim.ghost_cells_x,
-                               ghost_cells_y=sim.ghost_cells_y,
-                               q0_scale=q0_scale,
                                update_random_field=update_random_field,
                                perturbation_scale=perturbation_scale,
-                               perpendicular_scale=perpendicular_scale,
-                               align_with_cell_i=align_with_cell_i,
-                               align_with_cell_j=align_with_cell_j,
                                land_mask_value=sim.bathymetry.mask_value,
+                               random_numbers=random_numbers, 
+                               roll_x_sin=roll_x_sin, roll_y_sin=roll_y_sin,
+                               roll_x_cos=roll_x_cos, roll_y_cos=roll_y_cos,
                                stream=stream)
                                
     
     def perturbOceanState(self, eta, hu, hv, H, f, beta=0.0, g=9.81, 
-                          y0_reference_cell=0, ghost_cells_x=0, ghost_cells_y=0,
-                          q0_scale=1.0, update_random_field=True, 
-                          perturbation_scale=1.0, perpendicular_scale=0.0,
-                          align_with_cell_i=None, align_with_cell_j=None,
+                          y0_reference_cell=0, 
+                          update_random_field=True, 
+                          perturbation_scale=1.0,
                           land_mask_value=np.float32(1.0e20),
+                          random_numbers=None, 
+                          roll_x_sin=None, roll_y_sin=None,
+                          roll_x_cos=None, roll_y_cos=None,
                           stream=None):
         """
-        Apply the SOAR Q covariance matrix on the random ocean field which is
-        added to the provided buffers eta, hu and hv.
+        Sample random perturbation using the KL basis functions and add it to eta, hu, hv
         eta: surface deviation - CUDAArray2D object.
         hu: volume transport in x-direction - CUDAArray2D object.
         hv: volume transport in y-dirextion - CUDAArray2D object.
-        
-        Optional parameters not used else_where:
-        q0_scale=1: scale factor to the SOAR amplitude parameter q0
-        update_random_field=True: whether to generate new random numbers or use those already 
-            present in the random numbers buffer
-        perturbation_scale=1.0: scale factor to the perturbation of the eta field
-        perpendicular_scale=0.0: scale factor for additional perturbation from the perpendicular random field
-        align_with_cell_i=None, align_with_cell_j=None: Index to a cell for which to align the coarse grid.
-            The default value align_with_cell=None corresponds to zero offset between the coarse and fine grid.
         """
         
         if stream is None:
@@ -340,74 +344,74 @@ class ModelErrorKL(object):
         if update_random_field:
             # Need to update the random field, requiering a global sync
             self.generateNormalDistribution()
-        
-        soar_q0 = np.float32(self.soar_q0 * q0_scale)
-        
-        offset_i, offset_j = self._obtain_coarse_grid_offset(align_with_cell_i, align_with_cell_j)
-        
-        # Generate the SOAR field on the coarse grid
-        
-        
-        self.soarKernel.prepared_async_call(self.global_size_SOAR, self.local_size, stream,
-                                            self.coarse_nx, self.coarse_ny,
-                                            self.coarse_dx, self.coarse_dy,
+        if random_numbers is not None:
+            assert(isinstance(random_numbers, (Common.CUDAArray2D, np.ndarray))), "random numbers should be a CUDA 2D array or a numpy array, but is " + str(type(random_numbers))
+            if isinstance(random_numbers, Common.CUDAArray2D): 
+                # print("---------------------------------")
+                # print("Before copyBuffer", stream)
+                # print("self.gpu_stream: ", self.gpu_stream)
+                # print("self.random_numbers: ", self.random_numbers)
+                # print("random_numbers: ", random_numbers)
+                # print("self.random_numbers.data.ptr: ", self.random_numbers.data.ptr)
+                # print("random_numbers.data.ptr: ", random_numbers.data.ptr)
+                # print("self.random_numbers.bytes_per_float: ", self.random_numbers.bytes_per_float)
+                # print("random_numbers.bytes_per_float: ", random_numbers.bytes_per_float)
+                # print("self.random_numbers.holds_data: ", self.random_numbers.holds_data)
+                # print("random_numbers.holds_data: ", random_numbers.holds_data)
+                # print("random_numbers. nx, ny, nx_halo, ny_halo", random_numbers.nx, random_numbers.ny, random_numbers.nx_halo, random_numbers.ny_halo)
+                # print("eta. nx, ny, nx_halo, ny_halo", eta.nx, eta.ny, eta.nx_halo, eta.ny_halo)
+                # print("---------------------------------")
+                #
+                #self.random_numbers.copyBuffer(stream, random_numbers)
+                # TODO: Figure out why not copyBuffer works!?!
 
-                                            soar_q0, self.soar_L,
-                                            np.float32(perturbation_scale),
+                tmp_rns = random_numbers.download(stream)
+                self.random_numbers.upload(stream, tmp_rns)
+            else:
+                self.random_numbers.upload(stream, random_numbers)
+
+        if roll_x_sin is None:
+            roll_x_sin = np.random.rand()
+        if roll_y_sin is None:
+            roll_y_sin = np.random.rand()
+        if roll_x_cos is None:
+            roll_x_cos = np.random.rand()
+        if roll_y_cos is None:
+            roll_y_cos = np.random.rand()
+        def _check_roller(roller, name):
+            assert(isinstance(roller, (float, int, np.float32)) and roller >= 0 and roller <= 1), "illegal type/value of " + name +": " + str(roller)
+        _check_roller(roll_x_sin, "roll_x_sin")
+        _check_roller(roll_y_sin, "roll_y_sin")
+        _check_roller(roll_x_cos, "roll_x_cos")
+        _check_roller(roll_y_cos, "roll_y_cos")
+        
+        self.klSamplingKernel.prepared_async_call(self.global_size_KL, self.local_size, stream,
+                                            self.nx, self.ny,
+
+                                            self.basis_x_start, self.basis_x_end,
+                                            self.basis_y_start, self.basis_y_end,
+                                            self.include_cos, self.include_sin,
+                                            self.kl_decay, self.kl_scaling,
+                                            np.float32(roll_x_sin), np.float32(roll_y_sin), 
+                                            np.float32(roll_x_cos), np.float32(roll_y_cos), 
                                             
-                                            self.periodicNorthSouth, self.periodicEastWest,
                                             self.random_numbers.data.gpudata, self.random_numbers.pitch,
-                                            self.coarse_buffer.data.gpudata, self.coarse_buffer.pitch,
-                                            np.int32(0))
-        if perpendicular_scale > 0:
-            self.soarKernel.prepared_async_call(self.global_size_SOAR, self.local_size, stream,
-                                                self.coarse_nx, self.coarse_ny,
-                                                self.coarse_dx, self.coarse_dy,
-
-                                                soar_q0, self.soar_L,
-                                                np.float32(perpendicular_scale),
-
-                                                self.periodicNorthSouth, self.periodicEastWest,
-                                                self.perpendicular_random_numbers.data.gpudata, self.perpendicular_random_numbers.pitch,
-                                                self.coarse_buffer.data.gpudata, self.coarse_buffer.pitch,
-                                                np.int32(1))
+                                            eta.data.gpudata, eta.pitch)
         
-        if self.interpolation_factor > 1:
-            self.bicubicInterpolationKernel.prepared_async_call(self.global_size_geo_balance, self.local_size, stream,
-                                                                self.nx, self.ny, 
-                                                                np.int32(ghost_cells_x), np.int32(ghost_cells_y),
-                                                                self.dx, self.dy,
-                                                                
-                                                                self.coarse_nx, self.coarse_ny,
-                                                                np.int32(ghost_cells_x), np.int32(ghost_cells_y),
-                                                                self.coarse_dx, self.coarse_dy,
-                                                                np.int32(offset_i), np.int32(offset_j),
-                                                                
-                                                                np.float32(g), np.float32(f),
-                                                                np.float32(beta), np.float32(y0_reference_cell),
-                                                                
-                                                                self.coarse_buffer.data.gpudata, self.coarse_buffer.pitch,
-                                                                eta.data.gpudata, eta.pitch,
-                                                                hu.data.gpudata, hu.pitch,
-                                                                hv.data.gpudata, hv.pitch,
-                                                                H.data.gpudata, H.pitch,
-                                                                land_mask_value)
+            # self.geostrophicBalanceKernel.prepared_async_call(self.global_size_geo_balance, self.local_size, stream,
+            #                                                   self.nx, self.ny,
+            #                                                   self.dx, self.dy,
+            #                                                   np.int32(ghost_cells_x), np.int32(ghost_cells_y),
 
-        else:
-            self.geostrophicBalanceKernel.prepared_async_call(self.global_size_geo_balance, self.local_size, stream,
-                                                              self.nx, self.ny,
-                                                              self.dx, self.dy,
-                                                              np.int32(ghost_cells_x), np.int32(ghost_cells_y),
+            #                                                   np.float32(g), np.float32(f),
+            #                                                   np.float32(beta), np.float32(y0_reference_cell),
 
-                                                              np.float32(g), np.float32(f),
-                                                              np.float32(beta), np.float32(y0_reference_cell),
-
-                                                              self.coarse_buffer.data.gpudata, self.coarse_buffer.pitch,
-                                                              eta.data.gpudata, eta.pitch,
-                                                              hu.data.gpudata, hu.pitch,
-                                                              hv.data.gpudata, hv.pitch,
-                                                              H.data.gpudata, H.pitch,
-                                                              land_mask_value)
+            #                                                   self.coarse_buffer.data.gpudata, self.coarse_buffer.pitch,
+            #                                                   eta.data.gpudata, eta.pitch,
+            #                                                   hu.data.gpudata, hu.pitch,
+            #                                                   hv.data.gpudata, hv.pitch,
+            #                                                   H.data.gpudata, H.pitch,
+            #                                                   land_mask_value)
     
 
     
@@ -609,8 +613,10 @@ class ModelErrorKL(object):
         sin_rns = self.random_numbers_host[:self.N_basis_y, :]
         cos_rns = self.random_numbers_host[self.N_basis_y:, :]
         
-        sin_rns = np.reshape(sin_rns, (self.N_basis_y*self.N_basis_x))
-        cos_rns = np.reshape(cos_rns, (self.N_basis_y*self.N_basis_x))
+        # We transpose the random numbers so that they corresponds with the
+        # GPU kernel
+        sin_rns = np.reshape(sin_rns.T, (self.N_basis_y*self.N_basis_x))
+        cos_rns = np.reshape(cos_rns.T, (self.N_basis_y*self.N_basis_x))
         
         d_eta = np.zeros((self.ny+2, self.nx+2))
         if self.include_sin:
