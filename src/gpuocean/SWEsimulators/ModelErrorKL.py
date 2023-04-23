@@ -174,7 +174,9 @@ class ModelErrorKL(object):
         self.geostrophicBalanceKernel = self.kernels_noise.get_function("geostrophicBalance")
         self.geostrophicBalanceKernel.prepare("iiffiiffffPiPiPiPiPif")
         
-        self.klSamplingKernel = self.kernels_kl.get_function("kl_sample")
+        self.klSamplingKernelEta = self.kernels_kl.get_function("kl_sample_eta")
+        self.klSamplingKernelEta.prepare("iiiiiiiiffffffPiPi")
+        self.klSamplingKernel = self.kernels_kl.get_function("kl_sample_ocean_state")
         self.klSamplingKernel.prepare("iiiiiiiiffffffPiPi")
 
         #Compute kernel launch parameters
@@ -186,9 +188,15 @@ class ModelErrorKL(object):
                        int(np.ceil(self.seed_ny / float(self.local_size[1]))) \
                      ) 
         
-        # Launch one thread per grid cell 
+        # Launch one thread per grid cell, but also for one ghost cell per block,
         # cell in order to find geostrophic balance from the result
         self.global_size_KL = ( \
+                     int(np.ceil( self.nx/float(self.local_size[0]-2))), \
+                     int(np.ceil( self.ny/float(self.local_size[1]-2))) \
+                    )
+        
+        # Launch one thread per grid cell 
+        self.global_size_KL_eta = ( \
                      int(np.ceil( self.nx/float(self.local_size[0]))), \
                      int(np.ceil( self.ny/float(self.local_size[1]))) \
                     )
@@ -300,6 +308,74 @@ class ModelErrorKL(object):
         self.random_numbers_host[:, :] = random_numbers[:,:]
         self.random_numbers.upload(self.gpu_stream, self.random_numbers_host)
 
+
+    def perturbEtaSim(self, sim, perturbation_scale=1.0, update_random_field=True, 
+                   random_numbers=None, 
+                   roll_x_sin=None, roll_y_sin=None,
+                   roll_x_cos=None, roll_y_cos=None,
+                   stream=None):
+        """
+        Generating a perturbed eta field and adding it to sim's eta variable 
+        """
+        self.perturbEta(sim.gpu_data.h0, 
+                        update_random_field=update_random_field,
+                        random_numbers=random_numbers, 
+                        roll_x_sin=roll_x_sin, roll_y_sin=roll_y_sin,
+                        roll_x_cos=roll_x_cos, roll_y_cos=roll_y_cos,
+                        stream=stream)
+                               
+    def perturbEta(self, eta, 
+                   update_random_field=True, 
+                   random_numbers=None, 
+                   roll_x_sin=None, roll_y_sin=None,
+                   roll_x_cos=None, roll_y_cos=None,
+                   stream=None):
+        """
+        Sample random perturbation using the KL basis functions and add it to eta only
+        eta: surface deviation - CUDAArray2D object.
+        """
+        
+        if stream is None:
+            stream = self.gpu_stream
+        
+        if update_random_field:
+            # Need to update the random field, requiering a global sync
+            self.generateNormalDistribution()
+        if random_numbers is not None:
+            assert(isinstance(random_numbers, (Common.CUDAArray2D, np.ndarray))), "random numbers should be a CUDA 2D array or a numpy array, but is " + str(type(random_numbers))
+            if isinstance(random_numbers, Common.CUDAArray2D): 
+                tmp_rns = random_numbers.download(stream)
+                self.random_numbers.upload(stream, tmp_rns)
+            else:
+                self.random_numbers.upload(stream, random_numbers)
+
+        if roll_x_sin is None:
+            roll_x_sin = np.random.rand()
+        if roll_y_sin is None:
+            roll_y_sin = np.random.rand()
+        if roll_x_cos is None:
+            roll_x_cos = np.random.rand()
+        if roll_y_cos is None:
+            roll_y_cos = np.random.rand()
+        def _check_roller(roller, name):
+            assert(isinstance(roller, (float, int, np.float32)) and roller >= 0 and roller <= 1), "illegal type/value of " + name +": " + str(roller)
+        _check_roller(roll_x_sin, "roll_x_sin")
+        _check_roller(roll_y_sin, "roll_y_sin")
+        _check_roller(roll_x_cos, "roll_x_cos")
+        _check_roller(roll_y_cos, "roll_y_cos")
+        
+        self.klSamplingKernelEta.prepared_async_call(self.global_size_KL_eta, self.local_size, stream,
+                                            self.nx, self.ny,
+                                            self.basis_x_start, self.basis_x_end,
+                                            self.basis_y_start, self.basis_y_end,
+                                            self.include_cos, self.include_sin,
+                                            self.kl_decay, self.kl_scaling,
+                                            np.float32(roll_x_sin), np.float32(roll_y_sin), 
+                                            np.float32(roll_x_cos), np.float32(roll_y_cos), 
+                                            
+                                            self.random_numbers.data.gpudata, self.random_numbers.pitch,
+                                            eta.data.gpudata, eta.pitch)
+        
     def perturbSim(self, sim, perturbation_scale=1.0, update_random_field=True, 
                    random_numbers=None, 
                    roll_x_sin=None, roll_y_sin=None,
