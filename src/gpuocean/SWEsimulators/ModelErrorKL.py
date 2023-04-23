@@ -177,7 +177,7 @@ class ModelErrorKL(object):
         self.klSamplingKernelEta = self.kernels_kl.get_function("kl_sample_eta")
         self.klSamplingKernelEta.prepare("iiiiiiiiffffffPiPi")
         self.klSamplingKernel = self.kernels_kl.get_function("kl_sample_ocean_state")
-        self.klSamplingKernel.prepare("iiiiiiiiffffffPiPi")
+        self.klSamplingKernel.prepare("iifffffiiiiiiffffffPiPiPiPiPif")
 
         #Compute kernel launch parameters
         self.local_size = (block_width, block_height, 1)
@@ -208,7 +208,7 @@ class ModelErrorKL(object):
                    )
         
         # Texture for coriolis field
-        self.coriolis_texref = self.kernels_noise.get_texref("coriolis_f_tex")        
+        self.coriolis_texref = self.kernels_kl.get_texref("coriolis_f_tex")        
         if isinstance(coriolis_f, cuda.Array):
             # coriolis_f is already a texture, so we just set the reference
             self.coriolis_texref.set_array(coriolis_f)
@@ -226,7 +226,7 @@ class ModelErrorKL(object):
         
         
         # Texture for angle towards north
-        self.angle_texref = self.kernels_noise.get_texref("angle_tex")        
+        self.angle_texref = self.kernels_kl.get_texref("angle_tex")        
         if isinstance(angle, cuda.Array):
             # angle is already a texture, so we just set the reference
             self.angle_texref.set_array(angle)
@@ -322,6 +322,7 @@ class ModelErrorKL(object):
                         random_numbers=random_numbers, 
                         roll_x_sin=roll_x_sin, roll_y_sin=roll_y_sin,
                         roll_x_cos=roll_x_cos, roll_y_cos=roll_y_cos,
+                        perturbation_scale=perturbation_scale,
                         stream=stream)
                                
     def perturbEta(self, eta, 
@@ -329,6 +330,7 @@ class ModelErrorKL(object):
                    random_numbers=None, 
                    roll_x_sin=None, roll_y_sin=None,
                    roll_x_cos=None, roll_y_cos=None,
+                   perturbation_scale = 1.0,
                    stream=None):
         """
         Sample random perturbation using the KL basis functions and add it to eta only
@@ -369,7 +371,8 @@ class ModelErrorKL(object):
                                             self.basis_x_start, self.basis_x_end,
                                             self.basis_y_start, self.basis_y_end,
                                             self.include_cos, self.include_sin,
-                                            self.kl_decay, self.kl_scaling,
+                                            self.kl_decay, 
+                                            np.float32(perturbation_scale * self.kl_scaling),
                                             np.float32(roll_x_sin), np.float32(roll_y_sin), 
                                             np.float32(roll_x_cos), np.float32(roll_y_cos), 
                                             
@@ -386,6 +389,7 @@ class ModelErrorKL(object):
         """
         self.perturbOceanState(sim.gpu_data.h0, sim.gpu_data.hu0, sim.gpu_data.hv0,
                                sim.bathymetry.Bi,
+                               sim.dx, sim.dy,
                                sim.f, beta=sim.coriolis_beta, 
                                g=sim.g, 
                                y0_reference_cell=sim.y_zero_reference_cell,
@@ -398,7 +402,8 @@ class ModelErrorKL(object):
                                stream=stream)
                                
     
-    def perturbOceanState(self, eta, hu, hv, H, f, beta=0.0, g=9.81, 
+    def perturbOceanState(self, eta, hu, hv, H, 
+                          dx, dy, f, beta=0.0, g=9.81, 
                           y0_reference_cell=0, 
                           update_random_field=True, 
                           perturbation_scale=1.0,
@@ -462,17 +467,23 @@ class ModelErrorKL(object):
         _check_roller(roll_y_cos, "roll_y_cos")
         
         self.klSamplingKernel.prepared_async_call(self.global_size_KL, self.local_size, stream,
-                                            self.nx, self.ny,
-
+                                            self.nx, self.ny, dx, dy,
+                                            g, f, beta, 
                                             self.basis_x_start, self.basis_x_end,
                                             self.basis_y_start, self.basis_y_end,
                                             self.include_cos, self.include_sin,
-                                            self.kl_decay, self.kl_scaling,
+                                            self.kl_decay, 
+                                            np.float32(perturbation_scale * self.kl_scaling),
                                             np.float32(roll_x_sin), np.float32(roll_y_sin), 
                                             np.float32(roll_x_cos), np.float32(roll_y_cos), 
                                             
                                             self.random_numbers.data.gpudata, self.random_numbers.pitch,
-                                            eta.data.gpudata, eta.pitch)
+                                            eta.data.gpudata, eta.pitch,
+                                            hu.data.gpudata, hu.pitch,
+                                            hv.data.gpudata, hv.pitch,
+                                            H.data.gpudata, H.pitch,
+                                            land_mask_value
+                                            )
         
             # self.geostrophicBalanceKernel.prepared_async_call(self.global_size_geo_balance, self.local_size, stream,
             #                                                   self.nx, self.ny,
