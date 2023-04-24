@@ -104,6 +104,12 @@ class ModelErrorKL(object):
         self.basis_x_end    = np.int32(basis_x_end)
         self.basis_y_end    = np.int32(basis_y_end)
 
+        self.roll_x_sin = 0.0
+        self.roll_y_sin = 0.0
+        self.roll_x_cos = 0.0
+        self.roll_y_cos = 0.0
+
+
         self.N_basis_x = np.int32(self.basis_x_end - self.basis_x_start + 1)
         self.N_basis_y = np.int32(self.basis_y_end - self.basis_y_start + 1)
 
@@ -309,6 +315,30 @@ class ModelErrorKL(object):
         self.random_numbers.upload(self.gpu_stream, self.random_numbers_host)
 
 
+    def _setRollers(self, roll_x_sin, roll_y_sin, roll_x_cos, roll_y_cos):
+        """
+        Set roller parameters with some checking that the values are appropriate
+        """
+        if roll_x_sin is None:
+            roll_x_sin = np.random.rand()
+        if roll_y_sin is None:
+            roll_y_sin = np.random.rand()
+        if roll_x_cos is None:
+            roll_x_cos = np.random.rand()
+        if roll_y_cos is None:
+            roll_y_cos = np.random.rand()
+        def _check_roller(roller, name):
+            assert(isinstance(roller, (float, int, np.float32)) and roller >= 0 and roller <= 1), "illegal type/value of " + name +": " + str(roller)
+        _check_roller(roll_x_sin, "roll_x_sin")
+        _check_roller(roll_y_sin, "roll_y_sin")
+        _check_roller(roll_x_cos, "roll_x_cos")
+        _check_roller(roll_y_cos, "roll_y_cos")
+        
+        self.roll_x_sin = roll_x_sin
+        self.roll_y_sin = roll_y_sin
+        self.roll_x_cos = roll_x_cos
+        self.roll_y_cos = roll_y_cos        
+
     def perturbEtaSim(self, sim, perturbation_scale=1.0, update_random_field=True, 
                    random_numbers=None, 
                    roll_x_sin=None, roll_y_sin=None,
@@ -340,9 +370,6 @@ class ModelErrorKL(object):
         if stream is None:
             stream = self.gpu_stream
         
-        if update_random_field:
-            # Need to update the random field, requiering a global sync
-            self.generateNormalDistribution()
         if random_numbers is not None:
             assert(isinstance(random_numbers, (Common.CUDAArray2D, np.ndarray))), "random numbers should be a CUDA 2D array or a numpy array, but is " + str(type(random_numbers))
             if isinstance(random_numbers, Common.CUDAArray2D): 
@@ -350,22 +377,12 @@ class ModelErrorKL(object):
                 self.random_numbers.upload(stream, tmp_rns)
             else:
                 self.random_numbers.upload(stream, random_numbers)
-
-        if roll_x_sin is None:
-            roll_x_sin = np.random.rand()
-        if roll_y_sin is None:
-            roll_y_sin = np.random.rand()
-        if roll_x_cos is None:
-            roll_x_cos = np.random.rand()
-        if roll_y_cos is None:
-            roll_y_cos = np.random.rand()
-        def _check_roller(roller, name):
-            assert(isinstance(roller, (float, int, np.float32)) and roller >= 0 and roller <= 1), "illegal type/value of " + name +": " + str(roller)
-        _check_roller(roll_x_sin, "roll_x_sin")
-        _check_roller(roll_y_sin, "roll_y_sin")
-        _check_roller(roll_x_cos, "roll_x_cos")
-        _check_roller(roll_y_cos, "roll_y_cos")
+        elif update_random_field:
+            # Need to update the random field, requiering a global sync
+            self.generateNormalDistribution()
         
+        self._setRollers(roll_x_sin, roll_y_sin, roll_x_cos, roll_y_cos)     
+
         self.klSamplingKernelEta.prepared_async_call(self.global_size_KL_eta, self.local_size, stream,
                                             self.nx, self.ny,
                                             self.basis_x_start, self.basis_x_end,
@@ -373,8 +390,8 @@ class ModelErrorKL(object):
                                             self.include_cos, self.include_sin,
                                             self.kl_decay, 
                                             np.float32(perturbation_scale * self.kl_scaling),
-                                            np.float32(roll_x_sin), np.float32(roll_y_sin), 
-                                            np.float32(roll_x_cos), np.float32(roll_y_cos), 
+                                            np.float32(self.roll_x_sin), np.float32(self.roll_y_sin), 
+                                            np.float32(self.roll_x_cos), np.float32(self.roll_y_cos), 
                                             
                                             self.random_numbers.data.gpudata, self.random_numbers.pitch,
                                             eta.data.gpudata, eta.pitch)
@@ -422,9 +439,6 @@ class ModelErrorKL(object):
         if stream is None:
             stream = self.gpu_stream
         
-        if update_random_field:
-            # Need to update the random field, requiering a global sync
-            self.generateNormalDistribution()
         if random_numbers is not None:
             assert(isinstance(random_numbers, (Common.CUDAArray2D, np.ndarray))), "random numbers should be a CUDA 2D array or a numpy array, but is " + str(type(random_numbers))
             if isinstance(random_numbers, Common.CUDAArray2D): 
@@ -450,22 +464,12 @@ class ModelErrorKL(object):
                 self.random_numbers.upload(stream, tmp_rns)
             else:
                 self.random_numbers.upload(stream, random_numbers)
-
-        if roll_x_sin is None:
-            roll_x_sin = np.random.rand()
-        if roll_y_sin is None:
-            roll_y_sin = np.random.rand()
-        if roll_x_cos is None:
-            roll_x_cos = np.random.rand()
-        if roll_y_cos is None:
-            roll_y_cos = np.random.rand()
-        def _check_roller(roller, name):
-            assert(isinstance(roller, (float, int, np.float32)) and roller >= 0 and roller <= 1), "illegal type/value of " + name +": " + str(roller)
-        _check_roller(roll_x_sin, "roll_x_sin")
-        _check_roller(roll_y_sin, "roll_y_sin")
-        _check_roller(roll_x_cos, "roll_x_cos")
-        _check_roller(roll_y_cos, "roll_y_cos")
+        elif update_random_field:
+            # Need to update the random field, requiering a global sync
+            self.generateNormalDistribution()
         
+        self._setRollers(roll_x_sin, roll_y_sin, roll_x_cos, roll_y_cos)
+
         self.klSamplingKernel.prepared_async_call(self.global_size_KL, self.local_size, stream,
                                             self.nx, self.ny, dx, dy,
                                             g, f, beta, 
@@ -474,8 +478,8 @@ class ModelErrorKL(object):
                                             self.include_cos, self.include_sin,
                                             self.kl_decay, 
                                             np.float32(perturbation_scale * self.kl_scaling),
-                                            np.float32(roll_x_sin), np.float32(roll_y_sin), 
-                                            np.float32(roll_x_cos), np.float32(roll_y_cos), 
+                                            np.float32(self.roll_x_sin), np.float32(self.roll_y_sin), 
+                                            np.float32(self.roll_x_cos), np.float32(self.roll_y_cos), 
                                             
                                             self.random_numbers.data.gpudata, self.random_numbers.pitch,
                                             eta.data.gpudata, eta.pitch,
@@ -483,25 +487,21 @@ class ModelErrorKL(object):
                                             hv.data.gpudata, hv.pitch,
                                             H.data.gpudata, H.pitch,
                                             land_mask_value
-                                            )
+                                            )    
         
-            # self.geostrophicBalanceKernel.prepared_async_call(self.global_size_geo_balance, self.local_size, stream,
-            #                                                   self.nx, self.ny,
-            #                                                   self.dx, self.dy,
-            #                                                   np.int32(ghost_cells_x), np.int32(ghost_cells_y),
+    def perturbSimSimilarAs(self, simToPerturb, simSource=None, modelError=None, stream=None):
 
-            #                                                   np.float32(g), np.float32(f),
-            #                                                   np.float32(beta), np.float32(y0_reference_cell),
+        assert(simSource is not None or modelError is not None), "Please provide either simSource or modelError input arguments"
+        assert(simSource is None or modelError is None), "Please provide only one of simSource or modelError, not both."
 
-            #                                                   self.coarse_buffer.data.gpudata, self.coarse_buffer.pitch,
-            #                                                   eta.data.gpudata, eta.pitch,
-            #                                                   hu.data.gpudata, hu.pitch,
-            #                                                   hv.data.gpudata, hv.pitch,
-            #                                                   H.data.gpudata, H.pitch,
-            #                                                   land_mask_value)
-    
+        if simSource is not None:
+            modelError = simSource.model_error
 
-    
+        self.perturbSim(simToPerturb, 
+                        random_numbers=modelError.random_numbers, 
+                        roll_x_cos=modelError.roll_x_cos, roll_y_cos=modelError.roll_y_cos,
+                        roll_x_sin=modelError.roll_x_sin, roll_y_sin=modelError.roll_y_sin,
+                        stream=stream)
     
     ##### CPU versions of the above functions ####
     
@@ -681,21 +681,21 @@ class ModelErrorKL(object):
         self._initBasisFieldsCPU()
 
         # Call CPU utility function
-        if random_numbers is not None:
-            self.setRandomNumbers(random_numbers)
-        elif use_existing_GPU_random_numbers:
+        if use_existing_GPU_random_numbers:
             self.random_numbers_host = self.getRandomNumbers()
         else:
-            self.generateNormalDistributionCPU()
+            if random_numbers is not None:
+                self.setRandomNumbers(random_numbers)
+            else:
+                self.generateNormalDistributionCPU()
 
-        if roll_x_sin is None:
-            roll_x_sin = int(np.floor(np.random.rand()*self.nx))
-        if roll_y_sin is None:
-            roll_y_sin = int(np.floor(np.random.rand()*self.ny))
-        if roll_x_cos is None:
-            roll_x_cos = int(np.floor(np.random.rand()*self.nx))
-        if roll_y_cos is None:
-            roll_y_cos = int(np.floor(np.random.rand()*self.ny))
+            self._setRollers(roll_x_sin, roll_y_sin, roll_x_cos, roll_y_cos)
+
+        # Approximate the random rolling to the grid
+        roll_x_sin = int(np.floor(self.roll_x_sin*self.nx))
+        roll_y_sin = int(np.floor(self.roll_y_sin*self.ny))
+        roll_x_cos = int(np.floor(self.roll_x_cos*self.nx))
+        roll_y_cos = int(np.floor(self.roll_y_cos*self.ny))
 
         sin_rns = self.random_numbers_host[:self.N_basis_y, :]
         cos_rns = self.random_numbers_host[self.N_basis_y:, :]
