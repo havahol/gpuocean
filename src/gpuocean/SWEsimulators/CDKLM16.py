@@ -32,7 +32,7 @@ import logging
 from scipy.interpolate import interp2d
 
 from gpuocean.utils import Common, SimWriter, SimReader, WindStress, AtmosphericPressure
-from gpuocean.SWEsimulators import Simulator, OceanStateNoise
+from gpuocean.SWEsimulators import Simulator, OceanStateNoise, ModelErrorKL
 from gpuocean.utils import OceanographicUtilities
 
 
@@ -630,7 +630,23 @@ class CDKLM16(Simulator.Simulator):
                     model_error_args['small_scale_perturbation_interpolation_factor'] = sim_reader.get('small_scale_perturbation_interpolation_factor')
                     self.setSOARModelError(**model_error_args, use_lcg=use_lcg, xorwow_seed=xorwow_seed)
 
-           
+    def setKLModelError(self, kl_decay=1.2, kl_scaling=1.0,
+                        include_cos=True, include_sin=True,
+                        basis_x_start = 1, basis_y_start = 1,
+                        basis_x_end = 10, basis_y_end = 10,
+                        use_lcg=False, xorwow_seed = None,
+                        block_width=16, block_height=16):
+        self.model_error = ModelErrorKL.ModelErrorKL.fromsim(self,
+                                                             kl_decay=kl_decay, kl_scaling=kl_scaling,
+                                                             include_cos=include_cos, include_sin=include_sin,
+                                                             basis_x_start=basis_x_start, basis_y_start=basis_y_start,
+                                                             basis_x_end=basis_x_end, basis_y_end=basis_y_end,
+                                                             use_lcg=use_lcg, xorwow_seed=xorwow_seed,
+                                                             block_width=block_width, block_height=block_height)
+ 
+    def setModelErrorFromFile(self, filename, use_lcg=False, xorwow_seed = None):
+        raise("Not implemented")
+
     def drifterStep(self, dt):
         # Evolve drifters
         if self.hasDrifters:
@@ -674,11 +690,17 @@ class CDKLM16(Simulator.Simulator):
                            boundary_conditions)
             
     
-    def perturbState(self, q0_scale=1, perturbation_scale=1.0, update_random_field=True):
+    def perturbState(self, perturbation_scale=1.0, update_random_field=True, q0_scale=1):
+        if not q0_scale == 1:
+            Warning("CDKLM16.perturbState argument 'q0_scale' will be deprecated. Please use 'perturbation_scale' instead")
+            amplitude_scale = q0_scale
+
         if self.model_error is not None:
-            self.model_error.perturbSim(self, q0_scale=q0_scale, 
-                                        perturbation_scale=perturbation_scale, 
+            self.model_error.perturbSim(self, perturbation_scale=perturbation_scale, 
                                         update_random_field=update_random_field)
+            
+    def perturbSimilarAs(self, otherSim):
+        self.model_error.perturbSimSimilarAs(self, modelError = otherSim.model_error)
     
     def applyBoundaryConditions(self):
         self.bc_kernel.boundaryCondition(self.gpu_stream, \
