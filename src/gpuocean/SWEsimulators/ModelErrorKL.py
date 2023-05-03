@@ -163,7 +163,6 @@ class ModelErrorKL(object):
                                           })
         
         
-        
         # Get CUDA functions and define data types for prepared_{async_}call()
         # Generate kernels
         
@@ -171,9 +170,6 @@ class ModelErrorKL(object):
         if self.use_lcg:
             self.normalDistributionKernel = self.kernels.get_function("normalDistribution")
             self.normalDistributionKernel.prepare("iiiPiPi")
-        
-        #self.geostrophicBalanceKernel = self.kernels.get_function("geostrophicBalance")
-        #self.geostrophicBalanceKernel.prepare("iiffiiffffPiPiPiPiPif")
         
         self.klSamplingKernelEta = self.kernels.get_function("kl_sample_eta")
         self.klSamplingKernelEta.prepare("iiiiiiiiffffffPiPi")
@@ -201,12 +197,6 @@ class ModelErrorKL(object):
                      int(np.ceil( self.nx/float(self.local_size[0]))), \
                      int(np.ceil( self.ny/float(self.local_size[1]))) \
                     )
-        
-        # One thread per resulting perturbed grid cell
-        #self.global_size_geo_balance = ( \
-        #            int(np.ceil( (self.nx)/float(self.local_size[0]))), \
-        #            int(np.ceil( (self.ny)/float(self.local_size[1]))) \
-        #          )
         
         # Texture for coriolis field
         self.coriolis_texref = self.kernels.get_texref("coriolis_f_tex")        
@@ -740,6 +730,3 @@ class ModelErrorKL(object):
         else:
             data[:, -1] = data[:, 1]
 
-
-    #def perturbSimilar(self, other, eta, hu, hv, Hi, f,  beta=0.0, g=9.81):
-    # TODO : Requires that we store roll parameters, and that they are defined on [0, 1]
