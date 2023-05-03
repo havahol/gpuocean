@@ -629,6 +629,16 @@ class CDKLM16(Simulator.Simulator):
                     model_error_args['small_scale_perturbation_amplitude'] = sim_reader.get('small_scale_perturbation_amplitude')
                     model_error_args['small_scale_perturbation_interpolation_factor'] = sim_reader.get('small_scale_perturbation_interpolation_factor')
                     self.setSOARModelError(**model_error_args, use_lcg=use_lcg, xorwow_seed=xorwow_seed)
+                elif sim_reader.get('model_error_name') == "ModelErrorKL":
+                    model_error_args['kl_decay']       = sim_reader.get('kl_decay')
+                    model_error_args['kl_scaling']     = sim_reader.get('kl_scaling')
+                    model_error_args['include_cos']    = sim_reader.get('include_cos')
+                    model_error_args['include_sin']    = sim_reader.get('include_sin')
+                    model_error_args['basis_x_start']  = sim_reader.get('basis_x_start')
+                    model_error_args['basis_y_start']  = sim_reader.get('basis_y_start')
+                    model_error_args['basis_x_end']    = sim_reader.get('basis_x_end')
+                    model_error_args['basis_y_end']    = sim_reader.get('basis_y_end')
+                    self.setKLModelError(**model_error_args, use_lcg=use_lcg, xorwow_seed=xorwow_seed)
 
     def setKLModelError(self, kl_decay=1.2, kl_scaling=1.0,
                         include_cos=True, include_sin=True,

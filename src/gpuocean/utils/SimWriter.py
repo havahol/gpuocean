@@ -407,6 +407,15 @@ class SimNetCDFWriter:
                     self.small_scale_perturbation_interpolation_factor = sim.model_error.interpolation_factor
                     self.ncfile.small_scale_perturbation_interpolation_factor = self.small_scale_perturbation_interpolation_factor
                 
+                elif self.model_error_name == "ModelErrorKL":
+                    self.ncfile.kl_decay       = sim.model_error.kl_decay
+                    self.ncfile.kl_scaling     = sim.model_error.kl_scaling
+                    self.ncfile.include_cos    = sim.model_error.include_cos
+                    self.ncfile.include_sin    = sim.model_error.include_sin
+                    self.ncfile.basis_x_start  = sim.model_error.basis_x_start
+                    self.ncfile.basis_y_start  = sim.model_error.basis_y_start
+                    self.ncfile.basis_x_end    = sim.model_error.basis_x_end
+                    self.ncfile.basis_y_end    = sim.model_error.basis_y_end
 
 
        
