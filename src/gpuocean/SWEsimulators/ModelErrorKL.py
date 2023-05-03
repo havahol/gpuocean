@@ -154,35 +154,30 @@ class ModelErrorKL(object):
         self.random_numbers = Common.CUDAArray2D(self.gpu_stream, self.rand_nx, self.rand_ny, 0, 0, self.random_numbers_host)
                
         # Generate kernels
-        self.kernels_noise = gpu_ctx.get_kernel("ocean_noise.cu", \
-                                          defines={'block_width': block_width, 'block_height': block_height},
+        self.kernels = gpu_ctx.get_kernel("ocean_noise.cu", \
+                                          defines={'block_width': block_width, 'block_height': block_height,
+                                                    'kl_rand_nx': self.rand_nx, 'kl_rand_ny': self.rand_ny},
                                           compile_args={
                                               'options': ["--use_fast_math",
                                                           "--maxrregcount=32"]
                                           })
         
-        self.kernels_kl = gpu_ctx.get_kernel("model_error_kl.cu", \
-                                          defines={'block_width': block_width, 'block_height': block_height,
-                                                   'rand_nx': self.rand_nx, 'rand_ny': self.rand_ny},
-                                          compile_args={
-                                              'options': ["--use_fast_math",
-                                                          "--maxrregcount=32"]
-                                          })
+        
         
         # Get CUDA functions and define data types for prepared_{async_}call()
         # Generate kernels
         
         self.normalDistributionKernel = None
         if self.use_lcg:
-            self.normalDistributionKernel = self.kernels_noise.get_function("normalDistribution")
+            self.normalDistributionKernel = self.kernels.get_function("normalDistribution")
             self.normalDistributionKernel.prepare("iiiPiPi")
         
-        self.geostrophicBalanceKernel = self.kernels_noise.get_function("geostrophicBalance")
-        self.geostrophicBalanceKernel.prepare("iiffiiffffPiPiPiPiPif")
+        #self.geostrophicBalanceKernel = self.kernels.get_function("geostrophicBalance")
+        #self.geostrophicBalanceKernel.prepare("iiffiiffffPiPiPiPiPif")
         
-        self.klSamplingKernelEta = self.kernels_kl.get_function("kl_sample_eta")
+        self.klSamplingKernelEta = self.kernels.get_function("kl_sample_eta")
         self.klSamplingKernelEta.prepare("iiiiiiiiffffffPiPi")
-        self.klSamplingKernel = self.kernels_kl.get_function("kl_sample_ocean_state")
+        self.klSamplingKernel = self.kernels.get_function("kl_sample_ocean_state")
         self.klSamplingKernel.prepare("iifffffiiiiiiffffffPiPiPiPiPif")
 
         #Compute kernel launch parameters
@@ -208,13 +203,13 @@ class ModelErrorKL(object):
                     )
         
         # One thread per resulting perturbed grid cell
-        self.global_size_geo_balance = ( \
-                    int(np.ceil( (self.nx)/float(self.local_size[0]))), \
-                    int(np.ceil( (self.ny)/float(self.local_size[1]))) \
-                   )
+        #self.global_size_geo_balance = ( \
+        #            int(np.ceil( (self.nx)/float(self.local_size[0]))), \
+        #            int(np.ceil( (self.ny)/float(self.local_size[1]))) \
+        #          )
         
         # Texture for coriolis field
-        self.coriolis_texref = self.kernels_kl.get_texref("coriolis_f_tex")        
+        self.coriolis_texref = self.kernels.get_texref("coriolis_f_tex")        
         if isinstance(coriolis_f, cuda.Array):
             # coriolis_f is already a texture, so we just set the reference
             self.coriolis_texref.set_array(coriolis_f)
@@ -232,7 +227,7 @@ class ModelErrorKL(object):
         
         
         # Texture for angle towards north
-        self.angle_texref = self.kernels_kl.get_texref("angle_tex")        
+        self.angle_texref = self.kernels.get_texref("angle_tex")        
         if isinstance(angle, cuda.Array):
             # angle is already a texture, so we just set the reference
             self.angle_texref.set_array(angle)
