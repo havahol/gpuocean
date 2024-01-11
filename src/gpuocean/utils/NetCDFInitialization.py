@@ -241,65 +241,12 @@ def getInitialConditions(source_url_list, x0, x1, y0, y1, \
     for i in range(len(source_url_list)):
         source_url_list[i] = checkCachedNetCDF(source_url_list[i], download_data=download_data)
     
-        
-    # Read constants and initial values from the first source url
-    source_url = source_url_list[0]
+    # Get time steps:
     if norkyst_data:
-        try:
-            ncfile = Dataset(source_url)
-            H_m = ncfile.variables['h'][y0-1:y1+1, x0-1:x1+1]
-            eta0 = ncfile.variables['zeta'][0, y0-1:y1+1, x0-1:x1+1]
-            u0 = ncfile.variables['ubar'][0, y0:y1, x0:x1]
-            v0 = ncfile.variables['vbar'][0, y0:y1, x0:x1]
-            angle = ncfile.variables['angle'][y0:y1, x0:x1]
-            latitude = ncfile.variables['lat'][y0:y1, x0:x1]
-            x = ncfile.variables['X'][x0:x1]
-            y = ncfile.variables['Y'][y0:y1]
-        except Exception as e:
-            raise e
-        finally:
-            ncfile.close()
-        
-        u0 = u0.filled(0.0)
-        v0 = v0.filled(0.0)
-        
         time_str = 'time'
     else:
-        try:
-            ncfile = Dataset(source_url)
-            H_m = ncfile.variables['h'][y0-1:y1+1, x0-1:x1+1]
-            eta0 = ncfile.variables['zeta'][0, y0-1:y1+1, x0-1:x1+1]
-            u0 = ncfile.variables['ubar'][0, y0:y1, x0:x1+1]
-            v0 = ncfile.variables['vbar'][0, y0:y1+1, x0:x1]
-            angle = ncfile.variables['angle'][y0:y1, x0:x1]
-            #lon, lat at cell centers:
-            lat_rho = ncfile.variables['lat_rho'][y0:y1, x0:x1]
-            lon_rho = ncfile.variables['lon_rho'][y0:y1, x0:x1]
-        except Exception as e:
-            raise e
-        finally:
-            ncfile.close()
-        
-        latitude = lat_rho
-        
-        #Find x, y (in Norkyst800 reference system, origin at norkyst800 origin)
-        proj_str= '+proj=stere +ellps=WGS84 +lat_0=90.0 +lat_ts=60.0 +x_0=3192800 +y_0=1784000 +lon_0=70'
-        proj = pyproj.Proj(proj_str)
-        
-        x_rho, y_rho = proj(lon_rho, lat_rho, inverse = False)
-        x, y = x_rho[0], y_rho[:,0]
-        
-        #Find u,v at cell centers
-        u0 = u0.filled(fill_value = 0.0)
-        v0 = v0.filled(fill_value = 0.0)
-   
-        u0 = (u0[:,1:] + u0[:, :-1]) * 0.5
-        v0 = (v0[1:,:] + v0[:-1, :]) * 0.5
-        
         time_str = 'ocean_time'
 
-        
-    # Get time steps:
     if timestep_indices is None:
         timestep_indices = [None]*num_files
     elif type(timestep_indices) is not list:
@@ -307,6 +254,9 @@ def getInitialConditions(source_url_list, x0, x1, y0, y1, \
         for i in range(num_files):
             timestep_indices_tmp[i] = timestep_indices
         timestep_indices = timestep_indices_tmp
+    elif type(timestep_indices[0]) is not list:
+        timestep_indices = [timestep_indices]
+
     
     timesteps = [None]*num_files
         
@@ -333,13 +283,77 @@ def getInitialConditions(source_url_list, x0, x1, y0, y1, \
     for i in range(num_files):
         timesteps[i] = timesteps[i] - t0
     
+        
+    # Read constants and initial values from the first source url
+    source_url = source_url_list[0]
+    init_t_index = timestep_indices[0][0]
+    if norkyst_data:
+        try:
+            ncfile = Dataset(source_url)
+            H_m = ncfile.variables['h'][y0-1:y1+1, x0-1:x1+1]
+            eta0 = ncfile.variables['zeta'][init_t_index, y0-1:y1+1, x0-1:x1+1]
+            u0 = ncfile.variables['ubar'][init_t_index, y0:y1, x0:x1]
+            v0 = ncfile.variables['vbar'][init_t_index, y0:y1, x0:x1]
+            angle = ncfile.variables['angle'][y0:y1, x0:x1]
+            latitude = ncfile.variables['lat'][y0:y1, x0:x1]
+            x = ncfile.variables['X'][x0:x1]
+            y = ncfile.variables['Y'][y0:y1]
+        except Exception as e:
+            raise e
+        finally:
+            ncfile.close()
+        
+        u0 = u0.filled(0.0)
+        v0 = v0.filled(0.0)
+        
+    else:
+        try:
+            ncfile = Dataset(source_url)
+            H_m = ncfile.variables['h'][y0-1:y1+1, x0-1:x1+1]
+            eta0 = ncfile.variables['zeta'][init_t_index, y0-1:y1+1, x0-1:x1+1]
+            u0 = ncfile.variables['ubar'][init_t_index, y0:y1, x0:x1+1]
+            v0 = ncfile.variables['vbar'][init_t_index, y0:y1+1, x0:x1]
+            angle = ncfile.variables['angle'][y0:y1, x0:x1]
+            #lon, lat at cell centers:
+            lat_rho = ncfile.variables['lat_rho'][y0:y1, x0:x1]
+            lon_rho = ncfile.variables['lon_rho'][y0:y1, x0:x1]
+        except Exception as e:
+            raise e
+        finally:
+            ncfile.close()
+        
+        latitude = lat_rho
+        
+        #Find x, y (in Norkyst800 reference system, origin at norkyst800 origin)
+        proj_str= '+proj=stere +ellps=WGS84 +lat_0=90.0 +lat_ts=60.0 +x_0=3192800 +y_0=1784000 +lon_0=70'
+        proj = pyproj.Proj(proj_str)
+        
+        x_rho, y_rho = proj(lon_rho, lat_rho, inverse = False)
+        x, y = x_rho[0], y_rho[:,0]
+        
+        #Find u,v at cell centers
+        u0 = u0.filled(fill_value = 0.0)
+        v0 = v0.filled(fill_value = 0.0)
+   
+        u0 = (u0[:,1:] + u0[:, :-1]) * 0.5
+        v0 = (v0[1:,:] + v0[:-1, :]) * 0.5
+        
+
+        
     #Generate intersections bathymetry
     H_m_mask = eta0.mask.copy()
     H_m = np.ma.array(H_m, mask=H_m_mask)
     for i in range(erode_land):
         new_water = H_m.mask ^ binary_erosion(H_m.mask)
-        eps = 1.0e-5 #Make new Hm slighlyt different from land_value
-        eta0_dil = grey_dilation(eta0.filled(0.0), size=(3,3))
+        new_water[0,:]  = False # Avoid erosion along boundary
+        new_water[-1,:] = False
+        new_water[:,0]  = False
+        new_water[:,-1] = False
+        eps = 1.0e-5 #Make new Hm slightly different from land_value
+        
+        # Grey_dilation only works on positive numbers, so we add and subtract 10 to eta
+        eta0_tmp = eta0 + 10
+        eta0_dil = grey_dilation(eta0_tmp.filled(0.0), size=(3,3)) - 10
         H_m[new_water] = land_value+eps
         eta0[new_water] = eta0_dil[new_water]
         
