@@ -55,7 +55,8 @@ def getNorkystSubdomains():
         {'name': 'north_cape',     'x0': 2080, 'x1': 2350, 'y0':  390, 'y1':  590 },
         {'name': 'north_sea',      'x0':   25, 'x1':  350, 'y0':  550, 'y1':  875 },
         {'name': 'vestlandskysten','x0':  350, 'x1':  850, 'y0':  550, 'y1':  850 },
-        {'name': 'sorvestlandet',  'x0':  100, 'x1':  550, 'y0':  350, 'y1':  700 }
+        {'name': 'sorvestlandet',  'x0':  100, 'x1':  550, 'y0':  350, 'y1':  700 },
+        {'name': 'overlap_barents','x0': 1273, 'x1':  2580,'y0':    1, 'y1':  875 },
     ]
 
 
@@ -164,7 +165,6 @@ def getInitialConditions(source_url_list, x0, x1, y0, y1, \
     for i in range(num_files):
         timesteps[i] = timesteps[i] - t0 
     
-    
     # Read constants and initial values from the first source url
     source_url = source_url_list[0]
     if norkyst_data:
@@ -175,7 +175,8 @@ def getInitialConditions(source_url_list, x0, x1, y0, y1, \
             u0 = ncfile.variables['ubar'][t0_index, y0:y1, x0:x1]
             v0 = ncfile.variables['vbar'][t0_index, y0:y1, x0:x1]
             angle = ncfile.variables['angle'][y0:y1, x0:x1]
-            latitude = ncfile.variables['lat'][y0:y1, x0:x1]
+            latitude =  ncfile.variables['lat'][y0:y1, x0:x1]
+            longitude = ncfile.variables['lon'][y0:y1, x0:x1]
             x = ncfile.variables['X'][x0:x1]
             y = ncfile.variables['Y'][y0:y1]
         except Exception as e:
@@ -228,6 +229,7 @@ def getInitialConditions(source_url_list, x0, x1, y0, y1, \
             ncfile.close()
         
         latitude = lat_rho
+        longitude = lon_rho
         
         #Find x, y (in Norkyst800 reference system, origin at norkyst800 origin)
         proj_str= '+proj=stere +ellps=WGS84 +lat_0=90.0 +lat_ts=60.0 +x_0=3192800 +y_0=1784000 +lon_0=70'
@@ -307,6 +309,7 @@ def getInitialConditions(source_url_list, x0, x1, y0, y1, \
     
     #Physical variables
     ic['H'] = H_i
+    ic['Hm'] = H_m[1:-1, 1:-1]
     ic['eta0'] = eta0 #fill_coastal_data(eta0)
     ic['hu0'] = hu0
     ic['hv0'] = hv0
@@ -314,14 +317,19 @@ def getInitialConditions(source_url_list, x0, x1, y0, y1, \
     #Coriolis angle and beta
     ic['angle'] = angle
     ic['latitude'] = OceanographicUtilities.degToRad(latitude)
+    ic['lat'] = latitude
+    ic['lon'] = longitude
+
     ic['f'] = 0.0 #Set using latitude instead
     # The beta plane of doing it:
     # ic['f'], ic['coriolis_beta'] = OceanographicUtilities.calcCoriolisParams(OceanographicUtilities.degToRad(latitude[0, 0]))
     
     #Boundary conditions
-    ic['boundary_conditions_data'] = getBoundaryConditionsData(source_url_list, timestep_indices, timesteps, x0, x1, y0, y1, norkyst_data)
+    bc_data, bc_meta = getBoundaryConditionsData(source_url_list, timestep_indices, timesteps, x0, x1, y0, y1, norkyst_data)
+    ic['boundary_conditions_data'] = bc_data
     ic['boundary_conditions'] = Common.BoundaryConditions(north=3, south=3, east=3, west=3, spongeCells=sponge_cells)
-    
+    ic['boundary_conditions_meta'] = bc_meta
+
     #wind (wind speed in m/s used for forcing on drifter)
     ic['wind'] = getWind(source_url_list, timestep_indices, timesteps, x0, x1, y0, y1) 
     
@@ -378,6 +386,8 @@ def getBoundaryConditionsData(source_url_list, timestep_indices, timesteps, x0, 
     """
     num_files = len(source_url_list)
     
+    bc_meta = None
+
     nt = 0
     for i in range(num_files):
         nt += len(timesteps[i])
@@ -406,7 +416,7 @@ def getBoundaryConditionsData(source_url_list, timestep_indices, timesteps, x0, 
     bc_hv['west'] = np.empty((nt, y1-y0), dtype=np.float32)
     
     
-    bc_index = 0
+    bc_index = 0     
     for i in range(num_files):
         try:
             ncfile = Dataset(source_url_list[i])
@@ -474,7 +484,31 @@ def getBoundaryConditionsData(source_url_list, timestep_indices, timesteps, x0, 
                 bc_hv['west'][bc_index] = hv[1:-1, 0]
 
                 bc_index = bc_index + 1
-                
+            
+            if 'lat' in ncfile.variables.keys() or 'lat_rho' in ncfile.variables.keys():
+                if 'lat' in ncfile.variables.keys():
+                    lat =  ncfile.variables['lat'][y0-1:y1+1, x0-1:x1+1]
+                    lon = ncfile.variables['lon'][y0-1:y1+1, x0-1:x1+1]
+                elif 'lat_rho' in ncfile.variables.keys():
+                    lat = ncfile.variables['lat_rho'][y0-1:y1+1, x0-1:x1+1]
+                    lon = ncfile.variables['lon_rho'][y0-1:y1+1, x0-1:x1+1]
+                angle = ncfile.variables['angle'][y0-1:y1+1, x0-1:x1+1]
+                bc_lat = {'north': lat[-1, 1:-1],
+                          'south': lat[0, 1:-1],
+                          'east':  lat[1:-1, -1],
+                          'west':  lat[1:-1, 0]
+                }
+                bc_lon = {'north': lon[-1, 1:-1],
+                          'south': lon[0, 1:-1],
+                          'east':  lon[1:-1, -1],
+                          'west':  lon[1:-1, 0]
+                }
+                bc_angle = {'north': angle[-1, 1:-1],
+                            'south': angle[0, 1:-1],
+                            'east':  angle[1:-1, -1],
+                            'west':  angle[1:-1, 0]
+                }
+                bc_meta = {"lat": bc_lat, "lon": bc_lon, "angle": bc_angle}
 
         except Exception as e:
             raise e
@@ -489,7 +523,7 @@ def getBoundaryConditionsData(source_url_list, timestep_indices, timesteps, x0, 
         east=Common.SingleBoundaryConditionData(bc_eta['east'], bc_hu['east'], bc_hv['east']),
         west=Common.SingleBoundaryConditionData(bc_eta['west'], bc_hu['west'], bc_hv['west']))
     
-    return bc_data
+    return bc_data, bc_meta
 
 
 
@@ -753,5 +787,9 @@ def removeMetadata(old_ic):
     ic.pop('sponge_cells', None)
     ic.pop('t0', None)
     ic.pop('timesteps', None)
-    
+    ic.pop('lat', None)
+    ic.pop('lon', None)
+    ic.pop('Hm', None)
+    ic.pop('boundary_conditions_meta', None)
+
     return ic
