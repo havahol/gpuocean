@@ -31,6 +31,7 @@ import datetime, os, copy
 from netCDF4 import Dataset, MFDataset
 import pyproj
 from scipy.ndimage.morphology import binary_erosion, grey_dilation
+from scipy.interpolate import NearestNDInterpolator, LinearNDInterpolator
 
 import seawater as sw
 from scipy.ndimage.filters import convolve, gaussian_filter
@@ -90,7 +91,9 @@ def getInitialConditions(source_url_list, x0, x1, y0, y1, \
                          iterations=10, \
                          sponge_cells={'north':20, 'south': 20, 'east': 20, 'west': 20}, \
                          erode_land=0, 
-                         download_data=False
+                         download_data=False,
+                         fill_wind=False, 
+                         fill_interpolator_linear=False
                          ):
     """
     Constructing input arguments for CDKLM16 instances
@@ -331,7 +334,7 @@ def getInitialConditions(source_url_list, x0, x1, y0, y1, \
     ic['boundary_conditions_meta'] = bc_meta
 
     #wind (wind speed in m/s used for forcing on drifter)
-    ic['wind'] = getWind(source_url_list, timestep_indices, timesteps, x0, x1, y0, y1) 
+    ic['wind'] = getWind(source_url_list, timestep_indices, timesteps, x0, x1, y0, y1, fill_wind=fill_wind, linear=fill_interpolator_linear) 
     
     #Note
     ic['note'] = datetime.datetime.now().isoformat() + ": Generated from " + str(source_url_list)
@@ -528,7 +531,7 @@ def getBoundaryConditionsData(source_url_list, timestep_indices, timesteps, x0, 
 
 
 
-def getWind(source_url_list, timestep_indices, timesteps, x0, x1, y0, y1):
+def getWind(source_url_list, timestep_indices, timesteps, x0, x1, y0, y1, fill_wind=False, linear=False):
     """
     timestep_indices => index into netcdf-array, e.g. [1, 3, 5]
     timestep => time at timestep, e.g. [1800, 3600, 7200]
@@ -564,6 +567,12 @@ def getWind(source_url_list, timestep_indices, timesteps, x0, x1, y0, y1):
     else:
         return WindStress.WindStress()
 
+    if fill_wind:
+        for i in range(u_wind_list[0].shape[0]):
+            print(i)
+            u_wind_list[0][i] = fill_landmask(u_wind_list[0][i], linear=linear)
+            v_wind_list[0][i] = fill_landmask(v_wind_list[0][i], linear=linear)
+            
     u_wind = u_wind_list[0].filled(0)
     v_wind = v_wind_list[0].filled(0)
     for i in range(1, num_files):
@@ -715,6 +724,19 @@ def fill_coastal_data(maarr):
     return maarr
 
 
+def fill_landmask(data, eta_mask=None, linear=True):
+    if eta_mask is None:
+        mask = np.where(~data.mask)
+    else:
+        mask = np.where(~eta_mask)
+    
+    if linear:
+        interpolator = LinearNDInterpolator(np.transpose(mask), data[mask])
+    else:
+        interpolator = NearestNDInterpolator(np.transpose(mask), data[mask])
+    
+    data_filled = interpolator(*np.indices(data.shape))
+    return data_filled 
 
 # Returns True if the current execution context is an IPython notebook, e.g. Jupyter.
 # https://stackoverflow.com/questions/15411967/how-can-i-check-if-code-is-executed-in-the-ipython-notebook
