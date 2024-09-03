@@ -273,7 +273,7 @@ def make_generic_background(dx, dy, ax=None, nx=None, ny=None,
                             u=None, v=None, u_var=None, v_var=None,
                             figsize=None, cmap=None, vmax=None, cbar=True,
                             background_type='landmask',
-                            return_extent=False,
+                            return_extent=False, use_bathymetry_landmask=False,
                             **kwargs):
     """
     Creating a background canvas with values directly from np.arrays
@@ -288,7 +288,7 @@ def make_generic_background(dx, dy, ax=None, nx=None, ny=None,
     Note: `domain` sets the x/y axis extent and is therefore different from `drifter_domain`
     """
     _check_background_type(background_type)
-    
+
     if ax is None:
         fig, ax = plt.subplots(1,1, figsize=figsize)
 
@@ -310,6 +310,11 @@ def make_generic_background(dx, dy, ax=None, nx=None, ny=None,
     elif u_var is not None:
         ny, nx = u_var.shape
     extent = [0, nx*dx/1000, 0, ny*dy/1000]
+
+    # Change landmask according to flag
+    eta, hu, hv, H_m, u, v, v_var, u_var = modify_landmask(eta, hu, hv, H_m, 
+                                                          u, v, v_var, u_var, 
+                                                          use_bathymetry_landmask)
 
     # Make the different backgrounds
     if background_type == 'empty':
@@ -562,4 +567,28 @@ def add_kde_on_background(ax, ensemble_obs, drifter_id=0, cmap="Greens", label=N
               framealpha=0.9,
               loc=0
               )
+    
+    
+##################################################3
+# UTILS TO FIX LANDMASK
+def modify_landmask(eta, hu, hv, H_m, 
+                     u, v, v_var, u_var, 
+                     use_bathymetry_landmask):
+    
+    def _modify_landmask(data):
+        if data is None:
+            return data
+        return np.ma.MaskedArray(data.data, mask=H_m.mask)
+
+    if use_bathymetry_landmask and isinstance(H_m, np.ma.MaskedArray):
+        eta =   _modify_landmask(eta)
+        hu =    _modify_landmask(hu)
+        hv =    _modify_landmask(hv)
+        u =     _modify_landmask(u)
+        v =     _modify_landmask(v)
+        u_var = _modify_landmask(u_var)
+        v_var = _modify_landmask(v_var)
+
+    return eta, hu, hv, H_m, u, v, v_var, u_var
+
     
