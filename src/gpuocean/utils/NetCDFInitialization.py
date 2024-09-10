@@ -569,7 +569,6 @@ def getWind(source_url_list, timestep_indices, timesteps, x0, x1, y0, y1, fill_w
 
     if fill_wind:
         for i in range(u_wind_list[0].shape[0]):
-            print(i)
             u_wind_list[0][i] = fill_landmask(u_wind_list[0][i], linear=linear)
             v_wind_list[0][i] = fill_landmask(v_wind_list[0][i], linear=linear)
             
