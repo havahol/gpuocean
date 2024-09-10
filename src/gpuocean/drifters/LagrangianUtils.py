@@ -26,7 +26,7 @@ import numpy as np
 
 def lagrangian2concentration(positions, nx, ny, dx, dy, 
                              total_concentration=1.0,
-                             weight_per_particle=None):
+                             weight_per_particle=1):
     """
     Maps a list of lagrangian positions to a np.array of shape (ny, nx) with relative concentration of particles within each cell 
     """
@@ -43,7 +43,7 @@ def lagrangian2concentration(positions, nx, ny, dx, dy,
     
 def concentrationFromSim(sim, 
                          total_concentration=1.0,
-                         weight_per_particle=None,
+                         weight_per_particle=1,
                          apply_landmask = True):
     c =  lagrangian2concentration(sim.drifters.getDrifterPositions(), 
                                   sim.nx, sim.ny, sim.dx, sim.dy,
